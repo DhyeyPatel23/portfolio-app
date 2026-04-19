@@ -498,17 +498,18 @@ function render(d){
     /* RECENT VISITORS TABLE */
     '<div class="section"><h3>Recent Visitors (last 50)</h3>'+
     '<div style="overflow-x:auto"><table>'+
-    '<thead><tr><th>#</th><th>Time (IST)</th><th>IP</th><th>Browser</th><th>OS</th><th>Device</th><th>Referrer</th><th>Page</th></tr></thead><tbody>'+
+    '<thead><tr><th>#</th><th>Time (IST)</th><th>IP</th><th>Device Model</th><th>Browser</th><th>OS & Version</th><th>Type</th><th>Referrer</th><th>Page</th></tr></thead><tbody>'+
     d.recentVisitors.map(function(v,i){
+      var osStr = v.os + (v.os_version ? ' ' + v.os_version : '');
       return '<tr>'+
         '<td style="color:#5a6a84">'+(i+1)+'</td>'+
         '<td style="white-space:nowrap;font-family:monospace;font-size:.72rem">'+fmt(v.visited_at)+'</td>'+
         '<td style="font-family:monospace;font-size:.72rem;color:#00c8ff">'+v.ip+'</td>'+
+        '<td style="color:#00ffe7;font-weight:600">'+(v.device_model||'—')+'</td>'+
         '<td>'+v.browser+'</td>'+
-        '<td style="color:#8892a4">'+v.os+'</td>'+
+        '<td style="color:#8892a4">'+osStr+'</td>'+
         '<td>'+deviceBadge(v.device)+'</td>'+
-        '<td style="color:#5a6a84;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
-          (v.referrer||'Direct')+'</td>'+
+        '<td style="color:#5a6a84;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(v.referrer||'Direct')+'</td>'+
         '<td style="font-family:monospace;font-size:.72rem">'+v.page+'</td>'+
       '</tr>';
     }).join('')+
