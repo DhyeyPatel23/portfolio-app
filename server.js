@@ -210,6 +210,22 @@ app.post('/api/visit', async (req, res) => {
     const page = (req.body && req.body.page) || '/';
     const parsed = parseUA(ua);
 
+    /* ── Override UA-parsed values with Client Hints if browser sent them ──
+       Chrome 110+ sends "K" as model and "10" as Android version in the UA
+       string (privacy reduction). Client Hints give us the real values.    */
+    const hintModel = (req.body && req.body.deviceModel) ? String(req.body.deviceModel).trim() : '';
+    const hintOSVer = (req.body && req.body.osVersion) ? String(req.body.osVersion).trim() : '';
+    const hintPlatform = (req.body && req.body.platform) ? String(req.body.platform).trim() : '';
+
+    if (hintModel) { parsed.deviceModel = hintModel.slice(0, 120); }
+    if (hintOSVer) { parsed.osVersion = hintOSVer.slice(0, 40); }
+    if (hintPlatform && parsed.os === 'Other') { parsed.os = hintPlatform; }
+
+    /* Beautify Samsung model codes received via Client Hints */
+    if (/^SM-[A-Z0-9]+$/i.test(parsed.deviceModel)) {
+      parsed.deviceModel = 'Samsung ' + parsed.deviceModel;
+    }
+
     await pool.query(
       `INSERT INTO visitors
      (ip, user_agent, browser, os, os_version, device, device_model, referrer, page)

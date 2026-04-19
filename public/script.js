@@ -511,51 +511,52 @@
          and animates it into the hero HUD stat cell
     ════════════════════════════════════════════════════════ */
     (function trackVisit() {
-        /* ── POST visit (non-blocking, fire-and-forget) ── */
-        try {
+        var payload = {
+            referrer: document.referrer || '',
+            page: window.location.pathname || '/'
+        };
+
+        function sendVisit(data) {
             fetch('/api/visit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    referrer: document.referrer || '',
-                    page: window.location.pathname || '/'
-                }),
+                body: JSON.stringify(data),
                 keepalive: true
             })
-                .then(function (r) {
-                    if (!r.ok) { return; }
-                    return r.json();
-                })
-                .then(function (data) {
-                    /* After recording the visit, fetch updated total and animate counter */
-                    if (!data) { return; }
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d || !d.total) { return; }
                     var el = document.getElementById('live-visits');
                     if (!el) { return; }
-                    /* Pull visit count from the response */
-                    var total = data.total || null;
-                    if (total !== null) {
-                        animateCounter(el, total);
+                    var target = d.total;
+                    var startTs = null;
+                    function step(ts) {
+                        if (!startTs) { startTs = ts; }
+                        var pct = Math.min((ts - startTs) / 1200, 1);
+                        var val = Math.floor(pct * pct * target);
+                        el.textContent = val >= 1000 ? (val / 1000).toFixed(1) + 'k' : String(val);
+                        if (pct < 1) { requestAnimationFrame(step); }
+                        else { el.textContent = target >= 1000 ? (target / 1000).toFixed(1) + 'k' : String(target); }
                     }
+                    requestAnimationFrame(step);
                 })
                 .catch(function () { /* silent */ });
-        } catch (e) { /* silent */ }
+        }
 
-        /* ── Animate integer counter (0 → target over 1.2s) ── */
-        function animateCounter(el, target) {
-            var start = 0;
-            var dur = 1200;
-            var startTs = null;
-            function step(ts) {
-                if (!startTs) { startTs = ts; }
-                var pct = Math.min((ts - startTs) / dur, 1);
-                var val = Math.floor(pct * pct * target);  /* ease-in-quad */
-                el.textContent = val >= 1000
-                    ? (val / 1000).toFixed(1) + 'k'
-                    : String(val);
-                if (pct < 1) { requestAnimationFrame(step); }
-                else { el.textContent = target >= 1000 ? (target / 1000).toFixed(1) + 'k' : String(target); }
-            }
-            requestAnimationFrame(step);
+        /* ── Try UA Client Hints first (Chrome 90+ — gives REAL model & OS version) ── */
+        if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+            navigator.userAgentData.getHighEntropyValues(['model', 'platformVersion', 'platform'])
+                .then(function (hints) {
+                    if (hints.model) { payload.deviceModel = hints.model; }
+                    if (hints.platformVersion) { payload.osVersion = hints.platformVersion; }
+                    if (hints.platform) { payload.platform = hints.platform; }
+                    sendVisit(payload);
+                })
+                .catch(function () {
+                    sendVisit(payload); /* fallback — send without hints */
+                });
+        } else {
+            sendVisit(payload); /* non-Chrome or older browser */
         }
     }());
 
