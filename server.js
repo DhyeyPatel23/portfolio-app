@@ -1,12 +1,12 @@
 'use strict';
 
 require('dotenv').config();
-const express    = require('express');
-const { Pool }   = require('pg');
+const express = require('express');
+const { Pool } = require('pg');
 const nodemailer = require('nodemailer');
-const path       = require('path');
+const path = require('path');
 
-const app  = express();
+const app = express();
 const PORT = process.env.PORT || 3000;
 
 /* ═══════════════════════════════════════════════════════════
@@ -39,7 +39,9 @@ async function initDB() {
         user_agent   TEXT,
         browser      VARCHAR(120),
         os           VARCHAR(120),
+        os_version   VARCHAR(80),
         device       VARCHAR(60),
+        device_model VARCHAR(200),
         referrer     TEXT,
         page         VARCHAR(500),
         visited_at   TIMESTAMPTZ DEFAULT NOW()
@@ -56,6 +58,11 @@ async function initDB() {
         is_read      BOOLEAN DEFAULT FALSE
       );
     `);
+
+    /* Safe for existing databases — adds columns if missing */
+    await client.query(`ALTER TABLE visitors ADD COLUMN IF NOT EXISTS device_model VARCHAR(200)`);
+    await client.query(`ALTER TABLE visitors ADD COLUMN IF NOT EXISTS os_version   VARCHAR(80)`);
+
     console.log('✅  Database tables ready');
   } finally {
     client.release();
@@ -89,31 +96,84 @@ async function sendMail(to, subject, html) {
 
 /* ─── Helper: parse User-Agent into readable parts ─── */
 function parseUA(ua) {
-  if (!ua) { return { browser: 'Unknown', os: 'Unknown', device: 'Desktop' }; }
-  const uaL = ua.toLowerCase();
+  if (!ua) {
+    return { browser: 'Unknown', os: 'Unknown', osVersion: '', device: 'Desktop', deviceModel: 'Unknown' };
+  }
 
+  /* Browser */
   let browser = 'Other';
-  if      (uaL.includes('edg'))     { browser = 'Edge'; }
-  else if (uaL.includes('opr') || uaL.includes('opera')) { browser = 'Opera'; }
-  else if (uaL.includes('chrome'))  { browser = 'Chrome'; }
-  else if (uaL.includes('safari'))  { browser = 'Safari'; }
-  else if (uaL.includes('firefox')) { browser = 'Firefox'; }
+  if (ua.includes('Edg/') || ua.includes('EdgA/')) { browser = 'Edge'; }
+  else if (ua.includes('OPR/') || ua.includes('Opera')) { browser = 'Opera'; }
+  else if (ua.includes('SamsungBrowser')) { browser = 'Samsung Browser'; }
+  else if (ua.includes('Chrome') && !ua.includes('Chromium')) { browser = 'Chrome'; }
+  else if (ua.includes('Chromium')) { browser = 'Chromium'; }
+  else if (ua.includes('Firefox')) { browser = 'Firefox'; }
+  else if (ua.includes('Safari') && !ua.includes('Chrome')) { browser = 'Safari'; }
+  else if (ua.includes('MSIE') || ua.includes('Trident')) { browser = 'Internet Explorer'; }
 
-  let os = 'Other';
-  if      (uaL.includes('windows nt')) { os = 'Windows'; }
-  else if (uaL.includes('mac os x'))   { os = 'macOS'; }
-  else if (uaL.includes('android'))    { os = 'Android'; }
-  else if (uaL.includes('iphone') || uaL.includes('ipad')) { os = 'iOS'; }
-  else if (uaL.includes('linux'))      { os = 'Linux'; }
+  /* OS + version */
+  let os = 'Other', osVersion = '';
 
-  const device =
-    uaL.includes('mobile') || uaL.includes('android') || uaL.includes('iphone')
-      ? 'Mobile'
-      : uaL.includes('tablet') || uaL.includes('ipad')
-        ? 'Tablet'
-        : 'Desktop';
+  if (ua.includes('Windows NT')) {
+    os = 'Windows';
+    const m = ua.match(/Windows NT ([\d.]+)/);
+    if (m) {
+      const map = { '10.0': '10/11', '6.3': '8.1', '6.2': '8', '6.1': '7', '6.0': 'Vista', '5.1': 'XP' };
+      osVersion = map[m[1]] || m[1];
+    }
+  } else if (ua.includes('Android')) {
+    os = 'Android';
+    const m = ua.match(/Android ([\d.]+)/);
+    if (m) { osVersion = m[1]; }
+  } else if (ua.includes('iPhone') || ua.includes('iPad')) {
+    os = 'iOS';
+    const m = ua.match(/OS ([\d_]+)/);
+    if (m) { osVersion = m[1].replace(/_/g, '.'); }
+  } else if (ua.includes('Mac OS X')) {
+    os = 'macOS';
+    const m = ua.match(/Mac OS X ([\d_]+)/);
+    if (m) { osVersion = m[1].replace(/_/g, '.'); }
+  } else if (ua.includes('Linux')) {
+    os = 'Linux';
+  }
 
-  return { browser, os, device };
+  /* Device type */
+  let device = 'Desktop';
+  if (ua.includes('iPhone')) { device = 'Mobile'; }
+  else if (ua.includes('iPad')) { device = 'Tablet'; }
+  else if (ua.includes('Android') && ua.includes('Mobile')) { device = 'Mobile'; }
+  else if (ua.includes('Android') && !ua.includes('Mobile')) { device = 'Tablet'; }
+  else if (ua.includes('Mobile')) { device = 'Mobile'; }
+
+  /* Device model */
+  let deviceModel = '';
+
+  if (ua.includes('iPhone')) {
+    deviceModel = 'iPhone'; /* Apple removed model from UA since iOS 13 */
+  } else if (ua.includes('iPad')) {
+    deviceModel = 'iPad';
+  } else if (ua.includes('Android')) {
+    const m = ua.match(/Android\s[\d.]+;\s([^);]+?)(?:\s+Build\/|\))/);
+    if (m) {
+      deviceModel = m[1].trim();
+      if (/^SM-[A-Z0-9]+$/i.test(deviceModel)) {
+        deviceModel = 'Samsung ' + deviceModel; /* beautify Samsung codes */
+      }
+    } else {
+      deviceModel = 'Android Device';
+    }
+  } else if (os === 'Windows') {
+    deviceModel = 'Windows PC';
+  } else if (os === 'macOS') {
+    deviceModel = ua.includes('Macintosh') ? 'MacBook / iMac' : 'Mac';
+  } else if (os === 'Linux') {
+    deviceModel = 'Linux PC';
+  } else {
+    deviceModel = 'Unknown';
+  }
+
+  deviceModel = (deviceModel || 'Unknown').slice(0, 120).trim();
+  return { browser, os, osVersion, device, deviceModel };
 }
 
 function getIST(date) {
@@ -144,43 +204,48 @@ const VISIT_EMAIL_COOLDOWN_MS = 8 * 60 * 60 * 1000;  /* 8 hours */
 ═══════════════════════════════════════════════════════════ */
 app.post('/api/visit', async (req, res) => {
   try {
-    const ip       = realIP(req);
-    const ua       = req.headers['user-agent'] || '';
+    const ip = realIP(req);
+    const ua = req.headers['user-agent'] || '';
     const referrer = (req.body && req.body.referrer) || req.headers['referer'] || '';
-    const page     = (req.body && req.body.page)     || '/';
-    const parsed   = parseUA(ua);
+    const page = (req.body && req.body.page) || '/';
+    const parsed = parseUA(ua);
 
     await pool.query(
-      `INSERT INTO visitors (ip, user_agent, browser, os, device, referrer, page)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [ip, ua, parsed.browser, parsed.os, parsed.device, referrer, page]
+      `INSERT INTO visitors
+     (ip, user_agent, browser, os, os_version, device, device_model, referrer, page)
+   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [ip, ua, parsed.browser, parsed.os, parsed.osVersion,
+        parsed.device, parsed.deviceModel, referrer, page]
     );
 
     /* Get updated total count to send back to the frontend */
     const countRes = await pool.query('SELECT COUNT(*) AS c FROM visitors');
-    const total    = parseInt(countRes.rows[0].c);
+    const total = parseInt(countRes.rows[0].c);
 
     /* Respond with the total — frontend animates it into the HUD */
     res.json({ ok: true, total });
 
     /* Email notification — once per IP per 8 hrs (after response sent) */
     const lastNotified = visitEmailLog.get(ip);
-    const shouldEmail  = !lastNotified || (Date.now() - lastNotified > VISIT_EMAIL_COOLDOWN_MS);
+    const shouldEmail = !lastNotified || (Date.now() - lastNotified > VISIT_EMAIL_COOLDOWN_MS);
 
     if (shouldEmail) {
       visitEmailLog.set(ip, Date.now());
       const notifyTo = process.env.NOTIFY_EMAIL || process.env.EMAIL_USER;
       sendMail(
         notifyTo,
-        `🌐 Visit #${total} — ${parsed.device} / ${parsed.os}`,
+        `🌐 Visit #${total} — ${parsed.deviceModel} (${parsed.os} ${parsed.osVersion})`,
         `
         <div style="font-family:sans-serif;max-width:520px;background:#0d1117;color:#c9d4e8;padding:28px;border-radius:10px;border:1px solid rgba(0,200,255,0.2)">
           <h2 style="color:#00c8ff;margin-top:0">👁 Visit #${total} on Your Portfolio</h2>
           <table style="width:100%;border-collapse:collapse">
             <tr><td style="padding:8px 0;color:#5a6a84;width:110px">Total Visits</td><td style="color:#00c8ff;font-weight:bold">${total}</td></tr>
+            <tr><td style="padding:8px 0;color:#5a6a84;width:120px">Device Model</td><td style="color:#00ffe7;font-weight:bold">${parsed.deviceModel}</td></tr>
+            <tr><td style="padding:8px 0;color:#5a6a84">OS</td><td style="color:#fff">${parsed.os} ${parsed.osVersion}</td></tr>
             <tr><td style="padding:8px 0;color:#5a6a84">IP Address</td>  <td style="color:#fff">${ip}</td></tr>
             <tr><td style="padding:8px 0;color:#5a6a84">Browser</td>     <td style="color:#fff">${parsed.browser}</td></tr>
-            <tr><td style="padding:8px 0;color:#5a6a84">OS</td>          <td style="color:#fff">${parsed.os}</td></tr>
+            
+
             <tr><td style="padding:8px 0;color:#5a6a84">Device</td>      <td style="color:#fff">${parsed.device}</td></tr>
             <tr><td style="padding:8px 0;color:#5a6a84">Referrer</td>    <td style="color:#fff">${referrer || 'Direct'}</td></tr>
             <tr><td style="padding:8px 0;color:#5a6a84">Page</td>        <td style="color:#fff">${page}</td></tr>
@@ -234,7 +299,7 @@ app.post('/api/contact', async (req, res) => {
           <tr><td style="padding:8px 0;color:#5a6a84">Time</td>    <td style="color:#e2b96a">${getIST(new Date())}</td></tr>
         </table>
         <div style="margin-top:20px;padding:18px;background:rgba(255,255,255,0.04);border-left:3px solid #ff4d4d;border-radius:4px">
-          <p style="margin:0;white-space:pre-wrap;color:#c9d4e8">${message.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>
+          <p style="margin:0;white-space:pre-wrap;color:#c9d4e8">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
         </div>
         <p style="margin-top:20px;color:#5a6a84;font-size:12px">Sent from IP: ${ip}</p>
       </div>
@@ -251,7 +316,7 @@ app.post('/api/contact', async (req, res) => {
         <p style="color:#8892a4">Thank you for reaching out through my portfolio. I've received your message and will get back to you as soon as possible — usually within 24–48 hours.</p>
         <div style="margin:20px 0;padding:16px;background:rgba(255,255,255,0.04);border-radius:6px;border:1px solid rgba(255,255,255,0.08)">
           <p style="margin:0;font-size:12px;color:#5a6a84">Your message:</p>
-          <p style="margin:8px 0 0;white-space:pre-wrap;color:#c9d4e8;font-size:14px">${message.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>
+          <p style="margin:8px 0 0;white-space:pre-wrap;color:#c9d4e8;font-size:14px">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
         </div>
         <p style="color:#8892a4">— Dhyey Patel</p>
         <p style="color:#5a6a84;font-size:11px;margin-top:20px">This is an automated reply. Do not reply to this email.</p>
@@ -276,23 +341,25 @@ app.get('/api/stats', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
-    const [ total, today, browsers, devices, referrers, recent, contacts ] = await Promise.all([
+    const [total, today, browsers, devices, models, referrers, recent, contacts] = await Promise.all([
       pool.query('SELECT COUNT(*) AS c FROM visitors'),
       pool.query("SELECT COUNT(*) AS c FROM visitors WHERE visited_at >= NOW() - INTERVAL '24 hours'"),
       pool.query('SELECT browser, COUNT(*) AS cnt FROM visitors GROUP BY browser ORDER BY cnt DESC LIMIT 8'),
-      pool.query('SELECT device,  COUNT(*) AS cnt FROM visitors GROUP BY device  ORDER BY cnt DESC'),
-      pool.query("SELECT COALESCE(NULLIF(referrer,''), 'Direct') AS ref, COUNT(*) AS cnt FROM visitors GROUP BY ref ORDER BY cnt DESC LIMIT 10"),
-      pool.query('SELECT ip, browser, os, device, referrer, page, visited_at FROM visitors ORDER BY visited_at DESC LIMIT 50'),
-      pool.query('SELECT id, name, email, subject, submitted_at, is_read FROM contacts ORDER BY submitted_at DESC LIMIT 50')
+      pool.query('SELECT device, COUNT(*) AS cnt FROM visitors GROUP BY device ORDER BY cnt DESC'),
+      pool.query("SELECT COALESCE(device_model,'Unknown') AS model, COUNT(*) AS cnt FROM visitors GROUP BY device_model ORDER BY cnt DESC LIMIT 12"),
+      pool.query("SELECT COALESCE(NULLIF(referrer,''),'Direct') AS ref, COUNT(*) AS cnt FROM visitors GROUP BY ref ORDER BY cnt DESC LIMIT 10"),
+      pool.query('SELECT ip, browser, os, os_version, device, device_model, referrer, page, visited_at FROM visitors ORDER BY visited_at DESC LIMIT 50'),
+      pool.query('SELECT id, name, email, subject, message, submitted_at, is_read FROM contacts ORDER BY submitted_at DESC LIMIT 50')
     ]);
     res.json({
-      totalVisits:    parseInt(total.rows[0].c),
-      todayVisits:    parseInt(today.rows[0].c),
-      browsers:       browsers.rows,
-      devices:        devices.rows,
-      referrers:      referrers.rows,
+      totalVisits: parseInt(total.rows[0].c),
+      todayVisits: parseInt(today.rows[0].c),
+      browsers: browsers.rows,
+      devices: devices.rows,
+      models: models.rows,          /* ← new */
+      referrers: referrers.rows,
       recentVisitors: recent.rows,
-      contacts:       contacts.rows
+      contacts: contacts.rows
     });
   } catch (err) {
     console.error('/api/stats error:', err.message);
