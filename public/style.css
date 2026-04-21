@@ -374,7 +374,7 @@ section {
     background: rgba(5, 8, 16, 0.82);
 }
 
-.hud::before,
+/* .hud::before,
 .hud::after,
 .hud-inner::before,
 .hud-inner::after {
@@ -396,7 +396,7 @@ section {
     top: -1px;
     right: -1px;
     border-width: 2px 2px 0 0;
-}
+} */
 
 .hud-inner::before {
     bottom: -1px;
