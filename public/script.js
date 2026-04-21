@@ -625,7 +625,7 @@
                     btnSubmit.disabled = false;
                     btnSubmit.classList.remove('loading');
                     if (data.ok) {
-                        showToast('success', '✅ Message sent! I\'ll get back to you within 24 hours.');
+                        showToast('success', '✅ Message sent! I\'ll get back to you very soon.');
                         document.getElementById('cf-name').value = '';
                         document.getElementById('cf-email').value = '';
                         document.getElementById('cf-subject').value = '';
